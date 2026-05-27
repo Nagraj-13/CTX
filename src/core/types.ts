@@ -15,6 +15,32 @@ export type ProviderType = 'openai' | 'groq' | 'nvidia_nim' | 'ollama' | 'custom
 
 export type BuildDepth = 'minimal' | 'standard' | 'deep';
 
+// ─── CodeFlow Metrics ────────────────────────────────────────────────────────
+
+export interface SecurityIssue {
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  path: string;
+  line?: number;
+  desc: string;
+  code?: string;
+}
+
+export interface DetectedPattern {
+  name: string;
+  icon: string;
+  desc: string;
+  severity: 'info' | 'warning';
+  path: string;
+  metrics?: Record<string, number>;
+}
+
+export interface HealthScore {
+  score: number;
+  grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  issues: string[];
+}
+
 // ─── Symbol / AST Models ─────────────────────────────────────────────────────
 
 export type SymbolKind = 'function' | 'class' | 'type' | 'const' | 'interface' | 'enum' | 'method';
@@ -46,6 +72,8 @@ export interface ExtractedSymbols {
   exports: SymbolExport[];
   internals: SymbolExport[];
   signatureHash: string;    // hash of all exported signatures combined
+  securityIssues: SecurityIssue[];
+  patterns: DetectedPattern[];
 }
 
 // ─── Graph Models ─────────────────────────────────────────────────────────────
@@ -62,6 +90,8 @@ export interface GraphNode {
   semanticWeight: number;   // 0–1: centrality score
   lastSemanticChange: string;
   fileSize: number;
+  securityIssues: SecurityIssue[];
+  patterns: DetectedPattern[];
 }
 
 export interface DependencyGraph {
@@ -119,6 +149,9 @@ export interface BuildManifest {
     buildDurationMs: number;
     incrementalRebuild: boolean;
     modulesRebuilt: number;
+    healthScore?: HealthScore;
+    totalSecurityIssues?: number;
+    totalPatterns?: number;
   };
   providerConfig: {
     type: string;

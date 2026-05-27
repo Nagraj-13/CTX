@@ -189,6 +189,42 @@ ctx gc
 
 ---
 
+# ctx ui — Visual Dashboard
+
+Adds a browser-based context dashboard to CTX via `ctx ui`.
+
+
+###  Run it
+```bash
+ctx ui                    # opens http://localhost:7331
+ctx ui --port 8080        # custom port
+ctx ui --no-open          # don't auto-open browser
+```
+
+## Dashboard features
+
+| Panel | What it shows |
+|-------|---------------|
+| **Dependency Graph** | Force-directed D3 graph of all modules. Click a node to inspect. Drag to rearrange. Zoom with scroll. |
+| **Module Explorer** | Full semantic summary for any module + blast radius sidebar |
+| **Blast Radius** | BFS traversal of `importedBy` edges — shows every module affected if the selected file changes |
+| **Architecture** | Renders the `.ctx/artifacts/architecture.md` overview |
+| **Search** | Keyword search across all artifacts (calls `ArtifactStore.searchArtifacts`) |
+| **Build Stats** | Token usage, language breakdown, module groups, build metadata |
+
+## API endpoints (served by server.ts)
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/manifest` | Build manifest JSON |
+| `GET /api/graph` | D3-compatible nodes + links |
+| `GET /api/modules` | All module metadata (no content) |
+| `GET /api/module?path=…` | Single module with full content |
+| `GET /api/architecture` | Architecture artifact |
+| `GET /api/blast-radius?path=…` | BFS impact list |
+| `GET /api/search?q=…&limit=n` | Search results |
+| `GET *` | Serves dashboard.html |
+
 ## Agent Integration
 
 ### Claude Code / CLAUDE.md

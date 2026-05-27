@@ -1,10 +1,10 @@
-import { ExtractedSymbols, ImportStatement, SymbolExport, SymbolKind } from './types.js';
+import { ExtractedSymbols, ImportStatement, SymbolExport, SymbolKind, SecurityIssue, DetectedPattern } from './types.js';
 import { sha256 } from '../utils/helpers.js';
 import path from 'path';
 
 // ─── Language-specific parsers ────────────────────────────────────────────────
 
-type Parser = (content: string, filePath: string, repoRoot: string) => Omit<ExtractedSymbols, 'filePath' | 'language' | 'signatureHash'>;
+type Parser = (content: string, filePath: string, repoRoot: string) => Omit<ExtractedSymbols, 'filePath' | 'language' | 'signatureHash' | 'securityIssues' | 'patterns'>;
 
 // ─── TypeScript / JavaScript ──────────────────────────────────────────────────
 
@@ -364,7 +364,166 @@ const rustParser: Parser = (content, filePath, repoRoot) => {
   return { imports, exports, internals };
 };
 
-// ─── Generic fallback ──────────────────────────────────────────────────────────
+// ─── Simple Regex Parsers for other languages ───────────────────────────────────
+
+const javaParser: Parser = (content) => {
+  const imports: ImportStatement[] = [];
+  const re = /^import\s+([\w.]+);?/;
+  const seen = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = re.exec(line.trim());
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      imports.push({ source: m[1], symbols: [], isTypeOnly: false, isDynamic: false, isExternal: true });
+    }
+  }
+  return { imports, exports: [], internals: [] };
+};
+
+const csharpParser: Parser = (content) => {
+  const imports: ImportStatement[] = [];
+  const re = /^using\s+([\w.]+);?/;
+  const seen = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = re.exec(line.trim());
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      imports.push({ source: m[1], symbols: [], isTypeOnly: false, isDynamic: false, isExternal: true });
+    }
+  }
+  return { imports, exports: [], internals: [] };
+};
+
+const cppParser: Parser = (content, filePath, repoRoot) => {
+  const imports: ImportStatement[] = [];
+  const re = /^#include\s+([<"])([^>"]+)[>"]/;
+  const seen = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = re.exec(line.trim());
+    if (m) {
+      const type = m[1]; // < or "
+      const source = m[2];
+      if (!seen.has(source)) {
+        seen.add(source);
+        const isExternal = type === '<';
+        imports.push({ 
+          source, 
+          resolvedPath: isExternal ? undefined : resolveImportPath(source, filePath, repoRoot),
+          symbols: [], isTypeOnly: false, isDynamic: false, isExternal 
+        });
+      }
+    }
+  }
+  return { imports, exports: [], internals: [] };
+};
+
+const phpParser: Parser = (content, filePath, repoRoot) => {
+  const imports: ImportStatement[] = [];
+  const re = /^(?:use|require(?:_once)?|include(?:_once)?)\s+['"]?([^'";]+)['"]?;?/;
+  const seen = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = re.exec(line.trim());
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      const source = m[1];
+      const isExternal = !source.includes('/'); // Very rough heuristic
+      imports.push({ 
+        source, 
+        resolvedPath: isExternal ? undefined : resolveImportPath(source, filePath, repoRoot),
+        symbols: [], isTypeOnly: false, isDynamic: false, isExternal 
+      });
+    }
+  }
+  return { imports, exports: [], internals: [] };
+};
+
+const rubyParser: Parser = (content, filePath, repoRoot) => {
+  const imports: ImportStatement[] = [];
+  const re = /^require(?:_relative)?\s+['"]([^'"]+)['"]/;
+  const seen = new Set<string>();
+  for (const line of content.split('\n')) {
+    const m = re.exec(line.trim());
+    if (m && !seen.has(m[1])) {
+      seen.add(m[1]);
+      const source = m[1];
+      const isRelative = line.includes('require_relative') || source.startsWith('.') || source.startsWith('/');
+      imports.push({ 
+        source, 
+        resolvedPath: isRelative ? resolveImportPath(source, filePath, repoRoot) : undefined,
+        symbols: [], isTypeOnly: false, isDynamic: false, isExternal: !isRelative 
+      });
+    }
+  }
+  return { imports, exports: [], internals: [] };
+};
+
+const htmlParser: Parser = (content, filePath, repoRoot) => {
+  const imports: ImportStatement[] = [];
+  const scriptRe = /<script[^>]+src=['"]([^'"]+)['"]/g;
+  const linkRe = /<link[^>]+href=['"]([^'"]+)['"]/g;
+  const imgRe = /<img[^>]+src=['"]([^'"]+)['"]/g;
+  const seen = new Set<string>();
+
+  let m;
+  const matchAll = (re: RegExp) => {
+    while ((m = re.exec(content)) !== null) {
+      const source = m[1];
+      if (source.startsWith('http') || source.startsWith('//') || source.startsWith('data:')) continue;
+      if (!seen.has(source)) {
+        seen.add(source);
+        imports.push({
+          source,
+          resolvedPath: resolveImportPath(source, filePath, repoRoot),
+          symbols: [], isTypeOnly: false, isDynamic: false, isExternal: false
+        });
+      }
+    }
+  };
+
+  matchAll(scriptRe);
+  matchAll(linkRe);
+  matchAll(imgRe);
+
+  return { imports, exports: [], internals: [] };
+};
+
+const mdParser: Parser = (content, filePath, repoRoot) => {
+  const imports: ImportStatement[] = [];
+  const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
+  const seen = new Set<string>();
+
+  let m;
+  while ((m = linkRe.exec(content)) !== null) {
+    let source = m[1].split('#')[0]; // remove anchor
+    if (!source || source.startsWith('http') || source.startsWith('mailto:')) continue;
+    
+    // Attempt to decode URL encoding like %20
+    try { source = decodeURIComponent(source); } catch {}
+
+    if (!seen.has(source)) {
+      seen.add(source);
+      imports.push({
+        source,
+        resolvedPath: resolveImportPath(source, filePath, repoRoot),
+        symbols: [], isTypeOnly: false, isDynamic: false, isExternal: false
+      });
+    }
+  }
+  
+  return { imports, exports: [], internals: [] };
+};
+
+const mdxParser: Parser = (content, filePath, repoRoot) => {
+  // MDX has both TS imports and Markdown links
+  const tsResult = tsParser(content, filePath, repoRoot);
+  const mdResult = mdParser(content, filePath, repoRoot);
+  
+  return {
+    imports: [...tsResult.imports, ...mdResult.imports],
+    exports: tsResult.exports,
+    internals: tsResult.internals,
+  };
+};
 
 const genericParser: Parser = (content) => ({
   imports: [], exports: [], internals: [],
@@ -378,6 +537,18 @@ const PARSERS: Record<string, Parser> = {
   python: pythonParser,
   go: goParser,
   rust: rustParser,
+  java: javaParser,
+  kotlin: javaParser, // Java and Kotlin have similar import syntax
+  csharp: csharpParser,
+  cpp: cppParser,
+  c: cppParser,
+  php: phpParser,
+  ruby: rubyParser,
+  swift: javaParser, // Swift also uses 'import X'
+  html: htmlParser,
+  markdown: mdParser,
+  mdx: mdxParser,
+  json: genericParser,
 };
 
 // ─── Main parse function ──────────────────────────────────────────────────────
@@ -395,7 +566,10 @@ export function parseFile(
   const sigString = exports.map(e => e.signature).sort().join('\n');
   const signatureHash = sha256(sigString);
 
-  return { filePath, language, imports, exports, internals, signatureHash };
+  const securityIssues = detectSecurity(content, filePath);
+  const patterns = detectPatterns(content, filePath);
+
+  return { filePath, language, imports, exports, internals, signatureHash, securityIssues, patterns };
 }
 
 // ─── Import path resolution ───────────────────────────────────────────────────
@@ -404,7 +578,7 @@ function resolveImportPath(importPath: string, fromFile: string, repoRoot: strin
   if (!importPath.startsWith('.') && !importPath.startsWith('/')) return undefined;
   const fromDir = path.dirname(fromFile);
   const resolved = path.resolve(repoRoot, fromDir, importPath);
-  return path.relative(repoRoot, resolved);
+  return path.relative(repoRoot, resolved).replace(/\\/g, '/');
 }
 
 // ─── Signature collectors ─────────────────────────────────────────────────────
@@ -421,4 +595,121 @@ function collectSignature(lines: string[], startLine: number, _kind: string): st
 
 function collectBlock(lines: string[], startLine: number, maxLines: number): string {
   return lines.slice(startLine, startLine + maxLines).join('\n').slice(0, 300);
+}
+
+// ─── CodeFlow Analyzers ───────────────────────────────────────────────────────
+
+function detectSecurity(content: string, filePath: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const lines = content.split('\n');
+
+  lines.forEach((line, idx) => {
+    // Hardcoded secret check
+    if (/(?:password|passwd|pwd|secret|api_key|apikey|token|auth)\s*[=:]\s*['"][^'"]{4,}['"]/i.test(line) && !line.includes('process.env') && !line.includes('config.')) {
+      issues.push({
+        severity: 'high',
+        title: 'Hardcoded Secret',
+        path: filePath,
+        line: idx + 1,
+        desc: 'Credentials should never be hardcoded. Use environment variables or a secrets manager.',
+        code: line.trim().substring(0, 80)
+      });
+    }
+  });
+
+  // SQL Injection risk
+  if (/query\s*\(\s*['"`][^'"`]*\s*\+/.test(content) || /execute\s*\(\s*['"`][^'"`]*\$\{/.test(content) || /\$\{.*\}.*(?:SELECT|INSERT|UPDATE|DELETE)/i.test(content)) {
+    const m = content.match(/.*(query|execute|SELECT|INSERT|UPDATE|DELETE).*(\+|\$\{).*/i);
+    issues.push({
+      severity: 'high',
+      title: 'SQL Injection Risk',
+      path: filePath,
+      desc: 'String concatenation in SQL queries. Use parameterized queries instead.',
+      code: m ? m[0].trim().substring(0, 80) : ''
+    });
+  }
+
+  // Dangerous HTML / eval
+  const hasInnerHtmlAssignment = /innerHTML\s*=/.test(content);
+  const hasDangerousHtmlRender = /dangerouslySetInnerHTML/.test(content);
+  if (hasInnerHtmlAssignment || hasDangerousHtmlRender) {
+    issues.push({
+      severity: 'medium',
+      title: 'Dangerous HTML Render',
+      path: filePath,
+      desc: 'Direct HTML assignment can lead to XSS vulnerabilities.'
+    });
+  }
+
+  if (/eval\s*\(/.test(content)) {
+    issues.push({
+      severity: 'high',
+      title: 'Dangerous eval()',
+      path: filePath,
+      desc: 'Use of eval() is a severe security risk.'
+    });
+  }
+
+  return issues;
+}
+
+function detectPatterns(content: string, filePath: string): DetectedPattern[] {
+  const patterns: DetectedPattern[] = [];
+
+  // Singleton
+  if (content.includes('getInstance') || /let\s+instance\s*=/.test(content) || /private\s+static\s+instance/.test(content)) {
+    patterns.push({
+      name: 'Singleton',
+      icon: 'lock',
+      desc: 'Ensures a class has only one instance.',
+      severity: 'info',
+      path: filePath
+    });
+  }
+
+  // Factory
+  if (filePath.toLowerCase().includes('factory') || /create[A-Z]\w*\s*\(/.test(content)) {
+    patterns.push({
+      name: 'Factory',
+      icon: 'factory',
+      desc: 'Creates objects without specifying exact class.',
+      severity: 'info',
+      path: filePath
+    });
+  }
+
+  // Observer/Event
+  if (content.includes('subscribe') || content.includes('addEventListener') || content.includes('.on(') || content.includes('emit(')) {
+    patterns.push({
+      name: 'Observer/Event',
+      icon: 'eye',
+      desc: 'Subscription mechanism for event-driven architecture.',
+      severity: 'info',
+      path: filePath
+    });
+  }
+
+  // Custom Hooks (React)
+  if (/export\s+(?:const|function)\s+use[A-Z]/.test(content)) {
+    patterns.push({
+      name: 'Custom Hook',
+      icon: 'hook',
+      desc: 'React hook for reusable stateful logic.',
+      severity: 'info',
+      path: filePath
+    });
+  }
+
+  // Context Provider
+  if (content.includes('createContext') || content.includes('Provider') || content.includes('useContext')) {
+    patterns.push({
+      name: 'Context Provider',
+      icon: 'globe',
+      desc: 'React Context for global state.',
+      severity: 'info',
+      path: filePath
+    });
+  }
+
+  return patterns;
 }
