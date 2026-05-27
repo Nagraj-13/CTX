@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CTX — Context Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Berkeley+Mono:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0a0b0d;
+    --surface: #111318;
+    --surface2: #181c22;
+    --border: #222730;
+    --border2: #2d3340;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --text-muted: #374151;
+    --accent: #3b82f6;
+    --accent-glow: rgba(59,130,246,0.18);
+    --accent2: #06b6d4;
+    --green: #10b981;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --purple: #a78bfa;
+    --mono: 'Berkeley Mono', 'Fira Code', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+  /* ── Layout ── */
+  .shell {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 48px 1fr;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* ── Topbar ── */
+  .topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 50;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--text-dim); }
+  .topbar-sep { width: 1px; height: 20px; background: var(--border2); }
+  .build-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-dim); font-family: var(--mono);
+  }
+  .build-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2.5s ease-in-out infinite;
+  }
+  .build-dot.stale { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.5} }
+
+  .search-bar {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 0 10px;
+    width: 260px;
+  }
+  .search-bar svg { color: var(--text-dim); flex-shrink: 0; }
+  .search-bar input {
+    background: none; border: none; outline: none;
+    color: var(--text); font-family: var(--mono); font-size: 12px;
+    width: 100%; padding: 6px 0;
+  }
+  .search-bar input::placeholder { color: var(--text-muted); }
+
+  .stat-pill {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11px; font-family: var(--mono);
+    color: var(--text-dim);
+  }
+  .stat-pill strong { color: var(--text); }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-nav {
+    display: flex; flex-direction: column;
+    padding: 12px 8px;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-dim);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: var(--accent-glow); color: var(--accent); }
+  .nav-item svg { flex-shrink: 0; opacity: 0.7; }
+  .nav-item.active svg { opacity: 1; }
+
+  .sidebar-section {
+    padding: 8px 8px 4px;
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .module-list {
+    flex: 1; overflow-y: auto; padding: 4px 8px 12px;
+  }
+  .module-list::-webkit-scrollbar { width: 4px; }
+  .module-list::-webkit-scrollbar-track { background: transparent; }
+  .module-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .module-item {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .module-item:hover { background: var(--surface2); color: var(--text); }
+  .module-item.active { background: var(--accent-glow); color: var(--accent); }
+  .lang-dot {
+    width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
+  }
+  .lang-ts { background: #3178c6; }
+  .lang-py { background: #3572a5; }
+  .lang-rs { background: #dea584; }
+  .lang-go { background: #00acd7; }
+  .lang-js { background: #f1e05a; }
+  .lang-default { background: var(--text-muted); }
+
+  /* ── Main ── */
+  .main {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── Panels ── */
+  .panel {
+    flex: 1;
+    display: none;
+    overflow: hidden;
+    position: relative;
+  }
+  .panel.active { display: flex; flex-direction: column; }
+
+  /* ── Graph panel ── */
+  #graph-panel {
+    position: relative;
+  }
+  #graph-svg {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    cursor: grab;
+  }
+  #graph-svg:active { cursor: grabbing; }
+
+  .graph-controls {
+    position: absolute; top: 16px; right: 16px;
+    display: flex; flex-direction: column; gap: 4px;
+    z-index: 10;
+  }
+  .graph-btn {
+    width: 32px; height: 32px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); transition: all 0.15s;
+    font-size: 16px; user-select: none;
+  }
+  .graph-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+  .graph-legend {
+    position: absolute; bottom: 16px; left: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 5px;
+    z-index: 10;
+  }
+  .legend-row {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11px; font-family: var(--mono); color: var(--text-dim);
+  }
+  .legend-circle {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+
+  .graph-tooltip {
+    position: absolute;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 100;
+    max-width: 260px;
+  }
+  .graph-tooltip.visible { opacity: 1; }
+  .tooltip-path { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 4px; word-break: break-all; }
+  .tooltip-row { display: flex; justify-content: space-between; gap: 16px; color: var(--text-dim); font-size: 11px; }
+  .tooltip-row strong { color: var(--text); }
+  .tooltip-exports { margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+  .tooltip-export-tag {
+    display: inline-block; background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 3px; padding: 1px 5px; margin: 2px 2px 0 0; font-size: 10px;
+  }
+
+  /* ── Module detail panel ── */
+  #module-panel {
+    flex-direction: row;
+  }
+  .module-detail {
+    flex: 1; overflow-y: auto; padding: 28px 32px;
+  }
+  .module-detail::-webkit-scrollbar { width: 4px; }
+  .module-detail::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .detail-header { margin-bottom: 20px; }
+  .detail-path {
+    font-family: var(--mono); font-size: 13px; color: var(--accent);
+    margin-bottom: 6px; word-break: break-all;
+  }
+  .detail-meta {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  }
+  .meta-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 8px;
+    font-size: 11px; font-family: var(--mono); color: var(--text-dim);
+  }
+  .meta-tag.green { border-color: var(--green); color: var(--green); background: rgba(16,185,129,0.07); }
+  .detail-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 16px; }
+  .tag-chip {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 2px 9px;
+    font-size: 10px; font-family: var(--mono); color: var(--text-dim);
+  }
+  .detail-content {
+    font-size: 13.5px; line-height: 1.75;
+    color: var(--text);
+  }
+  .detail-content h2 {
+    font-size: 14px; font-weight: 600; color: var(--accent2);
+    margin: 20px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px;
+    font-family: var(--mono);
+  }
+  .detail-content h3 { font-size: 13px; font-weight: 500; margin: 12px 0 6px; color: var(--text); }
+  .detail-content code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 3px; padding: 1px 5px; color: var(--accent2);
+  }
+  .detail-content pre {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    margin: 8px 0;
+  }
+  .detail-content ul, .detail-content ol {
+    padding-left: 18px; margin: 6px 0;
+  }
+  .detail-content li { margin-bottom: 3px; }
+  .detail-content p { margin-bottom: 8px; }
+
+  /* Blast radius sidebar */
+  .blast-sidebar {
+    width: 240px; border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .blast-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono);
+    color: var(--yellow);
+  }
+  .blast-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .blast-list::-webkit-scrollbar { width: 3px; }
+  .blast-list::-webkit-scrollbar-thumb { background: var(--border2); }
+  .blast-item {
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: background 0.1s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .blast-item:hover { background: var(--surface2); }
+  .blast-depth {
+    font-size: 9px; padding: 1px 4px;
+    border-radius: 3px; font-family: var(--mono);
+    flex-shrink: 0;
+  }
+  .depth-1 { background: rgba(239,68,68,0.2); color: #ef4444; }
+  .depth-2 { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .depth-3 { background: rgba(107,114,128,0.15); color: #6b7280; }
+  .depth-4, .depth-5 { background: rgba(75,85,99,0.1); color: var(--text-muted); }
+  .blast-path { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .blast-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; font-family: var(--mono); }
+
+  /* ── Arch panel ── */
+  #arch-panel {
+    overflow-y: auto;
+    padding: 32px 40px;
+  }
+  #arch-panel::-webkit-scrollbar { width: 4px; }
+  #arch-panel::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .arch-content {
+    max-width: 820px;
+    font-size: 14px; line-height: 1.8;
+  }
+  .arch-content h1 { font-size: 22px; font-weight: 600; margin-bottom: 20px; color: var(--text); }
+  .arch-content h2 { font-size: 16px; font-weight: 600; color: var(--accent2); margin: 28px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; font-family: var(--mono); }
+  .arch-content h3 { font-size: 14px; font-weight: 500; margin: 16px 0 6px; }
+  .arch-content p { margin-bottom: 10px; color: var(--text); }
+  .arch-content code { font-family: var(--mono); font-size: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; color: var(--accent2); }
+  .arch-content pre { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.6; margin: 10px 0; }
+  .arch-content ul, .arch-content ol { padding-left: 20px; margin: 8px 0; }
+  .arch-content li { margin-bottom: 4px; }
+
+  /* ── Search panel ── */
+  #search-panel {
+    overflow-y: auto;
+    padding: 28px 32px;
+  }
+  #search-panel::-webkit-scrollbar { width: 4px; }
+  #search-panel::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .search-results { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+  .search-result {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .search-result:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
+  .result-path { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-bottom: 6px; }
+  .result-score {
+    display: inline-flex; align-items: center;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 7px;
+    font-size: 10px; font-family: var(--mono); color: var(--green);
+    float: right;
+  }
+  .result-preview { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; margin-top: 4px; }
+  .result-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .search-empty { color: var(--text-muted); font-family: var(--mono); font-size: 13px; padding: 40px 0; text-align: center; }
+
+  /* ── Stats panel ── */
+  #stats-panel {
+    overflow-y: auto;
+    padding: 28px 32px;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .stat-label { font-size: 11px; font-family: var(--mono); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .stat-value { font-size: 28px; font-weight: 600; font-family: var(--mono); color: var(--text); }
+  .stat-value.green { color: var(--green); }
+  .stat-value.accent { color: var(--accent); }
+  .stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: var(--mono); }
+
+  .section-title { font-size: 12px; font-family: var(--mono); color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
+
+  .lang-bar-container { margin-bottom: 28px; }
+  .lang-bar-row {
+    display: grid; grid-template-columns: 100px 1fr 50px;
+    align-items: center; gap: 12px; margin-bottom: 8px;
+  }
+  .lang-bar-label { font-size: 12px; font-family: var(--mono); color: var(--text-dim); }
+  .lang-bar-track { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+  .lang-bar-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+  .lang-bar-count { font-size: 11px; font-family: var(--mono); color: var(--text-muted); text-align: right; }
+
+  .group-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 28px; }
+  .group-table th {
+    text-align: left; padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .group-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    color: var(--text-dim);
+  }
+  .group-table tr:hover td { background: var(--surface2); }
+  .group-table td:first-child { color: var(--text); }
+
+  /* ── Loading / Error states ── */
+  .loading {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; flex-direction: column; gap: 12px;
+    color: var(--text-muted); font-family: var(--mono); font-size: 13px;
+  }
+  .spinner {
+    width: 24px; height: 24px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .no-build {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 12px; color: var(--text-dim); font-family: var(--mono); font-size: 13px;
+  }
+  .no-build code {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 16px;
+    color: var(--accent); font-size: 14px;
+  }
+
+  /* link buttons */
+  .blast-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: none; border: 1px solid var(--border2);
+    border-radius: 5px; padding: 4px 10px;
+    font-size: 11px; font-family: var(--mono); color: var(--text-dim);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .blast-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="logo">CTX <span>/ dashboard</span></div>
+    <div class="topbar-sep"></div>
+    <div class="build-badge">
+      <div class="build-dot" id="status-dot"></div>
+      <span id="status-text">Loading...</span>
+    </div>
+    <div class="topbar-sep"></div>
+    <div class="stat-pill"><strong id="stat-modules">—</strong> modules</div>
+    <div class="stat-pill"><strong id="stat-files">—</strong> files</div>
+    <div class="stat-pill"><strong id="stat-tokens">—</strong> tokens</div>
+
+    <div class="search-bar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="global-search" placeholder="Search artifacts..." autocomplete="off" />
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-panel="graph-panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+        Dependency Graph
+      </div>
+      <div class="nav-item" data-panel="module-panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Module Explorer
+      </div>
+      <div class="nav-item" data-panel="arch-panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Architecture
+      </div>
+      <div class="nav-item" data-panel="search-panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Search
+      </div>
+      <div class="nav-item" data-panel="stats-panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Build Stats
+      </div>
+    </nav>
+
+    <div class="sidebar-section" style="margin-top:4px">Modules</div>
+    <div class="module-list" id="module-list">
+      <div class="loading" style="height:80px"><div class="spinner"></div></div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+    <!-- Graph panel -->
+    <div class="panel active" id="graph-panel">
+      <svg id="graph-svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b8aaf" />
+          </marker>
+        </defs>
+        <g id="graph-root"></g>
+      </svg>
+      <div class="graph-controls">
+        <div class="graph-btn" id="zoom-in" title="Zoom in">+</div>
+        <div class="graph-btn" id="zoom-out" title="Zoom out">−</div>
+        <div class="graph-btn" id="zoom-fit" title="Fit to view">⊡</div>
+        <div class="graph-btn" id="toggle-labels" title="Toggle labels">T</div>
+      </div>
+      <div class="graph-legend">
+        <div class="legend-row"><div class="legend-circle" style="background:#3178c6"></div>TypeScript</div>
+        <div class="legend-row"><div class="legend-circle" style="background:#3572a5"></div>Python</div>
+        <div class="legend-row"><div class="legend-circle" style="background:#00acd7"></div>Go</div>
+        <div class="legend-row"><div class="legend-circle" style="background:#dea584"></div>Rust</div>
+        <div class="legend-row"><div class="legend-circle" style="background:#f1e05a"></div>JavaScript</div>
+        <div class="legend-row" style="margin-top:6px">
+          <div style="width:24px;height:2px;background:linear-gradient(90deg,#7eb8ff,#5a7a9e)"></div>imports →
+        </div>
+      </div>
+      <div class="graph-tooltip" id="graph-tooltip"></div>
+    </div>
+
+    <!-- Module detail panel -->
+    <div class="panel" id="module-panel">
+      <div class="module-detail" id="module-detail-content">
+        <div class="no-build">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="1.5"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>Select a module from the sidebar</span>
+        </div>
+      </div>
+      <div class="blast-sidebar" id="blast-sidebar">
+        <div class="blast-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Blast Radius
+        </div>
+        <div class="blast-list" id="blast-list">
+          <div class="blast-empty">Select a module to see impact</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture panel -->
+    <div class="panel" id="arch-panel">
+      <div class="arch-content" id="arch-content">
+        <div class="loading"><div class="spinner"></div><span>Loading architecture...</span></div>
+      </div>
+    </div>
+
+    <!-- Search panel -->
+    <div class="panel" id="search-panel">
+      <div style="max-width:760px">
+        <div style="margin-bottom:20px">
+          <h2 style="font-size:15px;font-weight:600;margin-bottom:4px;font-family:var(--mono)">Artifact Search</h2>
+          <p style="font-size:12px;color:var(--text-dim)">Search across all module summaries, architecture, flows, and gotchas.</p>
+        </div>
+        <div class="search-results" id="search-results">
+          <div class="search-empty">Type a query in the search bar above</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats panel -->
+    <div class="panel" id="stats-panel">
+      <div id="stats-content">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let graphData = null;
+let moduleList = [];
+let currentModule = null;
+let activePanel = 'graph-panel';
+let showLabels = true;
+let simulation = null;
+let zoomBehavior = null;
+let searchTimeout = null;
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    const panel = el.dataset.panel;
+    switchPanel(panel);
+  });
+});
+
+function switchPanel(panelId) {
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.panel === panelId);
+  });
+  document.querySelectorAll('.panel').forEach(el => {
+    el.classList.toggle('active', el.id === panelId);
+  });
+  activePanel = panelId;
+  if (panelId === 'graph-panel' && graphData) renderGraph(graphData);
+  if (panelId === 'arch-panel') loadArchitecture();
+  if (panelId === 'stats-panel') loadStats();
+}
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+async function api(path) {
+  const res = await fetch(path);
+  return res.json();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const [manifest, modules] = await Promise.all([
+      api('/api/manifest'),
+      api('/api/modules'),
+    ]);
+
+    if (manifest.error) {
+      setStatus('stale', manifest.error);
+    } else {
+      const stats = manifest.buildStats || {};
+      const ageMin = Math.floor((Date.now() - Date.parse(manifest.timestamp)) / 60000);
+      const stale = ageMin > 120;
+      setStatus(stale ? 'stale' : 'fresh',
+        stale ? `Built ${ageMin}m ago — may be stale` : `Built ${ageMin}m ago`);
+      document.getElementById('stat-modules').textContent = stats.totalModules ?? '—';
+      document.getElementById('stat-files').textContent = stats.totalFiles ?? '—';
+      const tok = stats.totalTokensConsumed;
+      document.getElementById('stat-tokens').textContent =
+        tok ? (tok >= 1e6 ? (tok/1e6).toFixed(1)+'M' : (tok/1e3).toFixed(0)+'K') : '—';
+    }
+
+    moduleList = modules;
+    renderModuleList(modules);
+
+    // Load graph
+    const graphRaw = await api('/api/graph');
+    if (!graphRaw.error) {
+      graphData = graphRaw;
+      renderGraph(graphData);
+    }
+  } catch (err) {
+    setStatus('stale', 'Cannot connect to server');
+  }
+}
+
+function setStatus(state, text) {
+  const dot = document.getElementById('status-dot');
+  const label = document.getElementById('status-text');
+  dot.className = 'build-dot' + (state === 'stale' ? ' stale' : '');
+  label.textContent = text;
+}
+
+// ── Module list ───────────────────────────────────────────────────────────────
+function renderModuleList(modules) {
+  const container = document.getElementById('module-list');
+  if (!modules.length) {
+    container.innerHTML = '<div class="blast-empty">No modules. Run: ctx build</div>';
+    return;
+  }
+
+  const sorted = [...modules].sort((a, b) => a.path.localeCompare(b.path));
+  container.innerHTML = sorted.map(m => `
+    <div class="module-item" data-path="${m.path}" onclick="selectModule('${m.path.replace(/'/g, "\\'")}')">
+      <div class="lang-dot ${langClass(m.path)}"></div>
+      <span title="${m.path}">${shortPath(m.path)}</span>
+    </div>
+  `).join('');
+}
+
+function langClass(path) {
+  if (path.endsWith('.ts') || path.endsWith('.tsx')) return 'lang-ts';
+  if (path.endsWith('.py')) return 'lang-py';
+  if (path.endsWith('.rs')) return 'lang-rs';
+  if (path.endsWith('.go')) return 'lang-go';
+  if (path.endsWith('.js') || path.endsWith('.jsx')) return 'lang-js';
+  return 'lang-default';
+}
+
+function shortPath(path) {
+  const parts = path.split('/');
+  if (parts.length <= 2) return path;
+  return '…/' + parts.slice(-2).join('/');
+}
+
+// ── Module detail ─────────────────────────────────────────────────────────────
+async function selectModule(filePath) {
+  switchPanel('module-panel');
+  currentModule = filePath;
+
+  // Update sidebar selection
+  document.querySelectorAll('.module-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.path === filePath);
+  });
+
+  const content = document.getElementById('module-detail-content');
+  content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+  try {
+    const artifact = await api(`/api/module?path=${encodeURIComponent(filePath)}`);
+    if (artifact.error) {
+      content.innerHTML = `<div class="no-build"><span style="color:var(--red)">${artifact.error}</span></div>`;
+      return;
+    }
+
+    const meta = artifact.metadata || {};
+    content.innerHTML = `
+      <div class="detail-header">
+        <div class="detail-path">${artifact.path}</div>
+        <div class="detail-meta">
+          <div class="meta-tag">${artifact.type}</div>
+          <div class="meta-tag">${meta.tokenCount ?? 0} tokens</div>
+          <div class="meta-tag">v${meta.version ?? 1}</div>
+          <div class="meta-tag">${meta.generatedBy ?? 'unknown'}</div>
+          <div class="meta-tag green">conf ${((meta.confidence ?? 0.8) * 100).toFixed(0)}%</div>
+          <button class="blast-btn" onclick="loadBlastRadius('${filePath.replace(/'/g, "\\'")}')">
+            ⚡ Blast radius
+          </button>
+        </div>
+        <div class="detail-tags">
+          ${(artifact.tags || []).slice(0, 12).map(t => `<div class="tag-chip">${t}</div>`).join('')}
+        </div>
+      </div>
+      <div class="detail-content">${renderMarkdown(artifact.content || '')}</div>
+    `;
+
+    // Auto-load blast radius
+    loadBlastRadius(filePath);
+  } catch (err) {
+    content.innerHTML = `<div class="no-build"><span style="color:var(--red)">Error: ${err.message}</span></div>`;
+  }
+}
+
+async function loadBlastRadius(filePath) {
+  const list = document.getElementById('blast-list');
+  list.innerHTML = '<div class="loading" style="height:80px"><div class="spinner"></div></div>';
+
+  try {
+    const data = await api(`/api/blast-radius?path=${encodeURIComponent(filePath)}`);
+    if (data.error) {
+      list.innerHTML = '<div class="blast-empty">No graph data available</div>';
+      return;
+    }
+
+    // Handle "not found in graph" distinctly from "no dependents"
+    if (data.found === false) {
+      const header = document.querySelector('.blast-header');
+      header.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Blast Radius <span style="color:var(--text-muted);margin-left:4px">—</span>
+      `;
+      list.innerHTML = `<div class="blast-empty" style="color:var(--yellow)">
+        <div style="margin-bottom:6px">⚠ Module not found in dependency graph</div>
+        <div style="font-size:10px;color:var(--text-muted)">Run <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:10px">ctx build</code> to regenerate</div>
+      </div>`;
+      return;
+    }
+
+    const { affected } = data;
+    if (!affected || !affected.length) {
+      const header = document.querySelector('.blast-header');
+      header.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Blast Radius <span style="color:var(--green);margin-left:4px">0</span>
+      `;
+      list.innerHTML = '<div class="blast-empty" style="color:var(--green)">✓ No dependents — safe to change</div>';
+      return;
+    }
+
+    const header = document.querySelector('.blast-header');
+    header.innerHTML = `
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Blast Radius <span style="color:var(--red);margin-left:4px">${affected.length}</span>
+    `;
+
+    list.innerHTML = affected.map(item => `
+      <div class="blast-item" onclick="selectModule('${item.path.replace(/'/g, "\\'")}')">
+        <span class="blast-depth depth-${Math.min(item.depth, 5)}">${item.depth}</span>
+        <span class="blast-path" title="${item.path}">${shortPath(item.path)}</span>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="blast-empty" style="color:var(--red)">Error loading blast radius</div>`;
+  }
+}
+
+// ── Architecture ──────────────────────────────────────────────────────────────
+async function loadArchitecture() {
+  const content = document.getElementById('arch-content');
+  content.innerHTML = '<div class="loading"><div class="spinner"></div><span>Loading...</span></div>';
+
+  try {
+    const arch = await api('/api/architecture');
+    if (arch.error) {
+      content.innerHTML = `<div class="no-build"><span>${arch.error}</span><code>ctx build</code></div>`;
+      return;
+    }
+    content.innerHTML = renderMarkdown(arch.content || '');
+  } catch (err) {
+    content.innerHTML = `<div class="no-build"><span style="color:var(--red)">Error: ${err.message}</span></div>`;
+  }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const content = document.getElementById('stats-content');
+  try {
+    const [manifest, modules] = await Promise.all([api('/api/manifest'), api('/api/modules')]);
+
+    if (manifest.error) {
+      content.innerHTML = `<div class="no-build"><span>${manifest.error}</span><code>ctx build</code></div>`;
+      return;
+    }
+
+    const stats = manifest.buildStats || {};
+    const ageMin = Math.floor((Date.now() - Date.parse(manifest.timestamp)) / 60000);
+
+    // Language breakdown from modules
+    const langCounts = {};
+    (modules || []).forEach(m => {
+      const ext = (m.path || '').split('.').pop()?.toLowerCase() || 'other';
+      const lang = {ts:'TypeScript',tsx:'TypeScript',js:'JavaScript',jsx:'JavaScript',py:'Python',rs:'Rust',go:'Go',kt:'Kotlin',rb:'Ruby',cs:'C#'}[ext] || ext.toUpperCase();
+      langCounts[lang] = (langCounts[lang] || 0) + 1;
+    });
+    const total = modules.length || 1;
+    const langEntries = Object.entries(langCounts).sort((a,b)=>b[1]-a[1]);
+
+    // Group breakdown
+    const groupCounts = {};
+    (modules || []).forEach(m => {
+      const parts = m.path.split('/');
+      const group = parts.length > 1 ? parts[0] : 'root';
+      groupCounts[group] = (groupCounts[group] || 0) + 1;
+    });
+    const groupEntries = Object.entries(groupCounts).sort((a,b)=>b[1]-a[1]);
+
+    const langColors = {
+      TypeScript:'#3178c6', Python:'#3572a5', JavaScript:'#f1e05a',
+      Go:'#00acd7', Rust:'#dea584', Kotlin:'#7f52ff', Ruby:'#cc342d', 'C#':'#178600'
+    };
+
+    const tok = stats.totalTokensConsumed || 0;
+    const dur = stats.buildDurationMs || 0;
+
+    content.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total Modules</div>
+          <div class="stat-value accent">${stats.totalModules ?? 0}</div>
+          <div class="stat-sub">${stats.totalFiles ?? 0} source files</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Tokens Consumed</div>
+          <div class="stat-value">${tok >= 1e6 ? (tok/1e6).toFixed(2)+'M' : (tok/1e3).toFixed(1)+'K'}</div>
+          <div class="stat-sub">during build</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Build Duration</div>
+          <div class="stat-value green">${dur < 1000 ? dur+'ms' : (dur/1000).toFixed(1)+'s'}</div>
+          <div class="stat-sub">${stats.incrementalRebuild ? 'incremental' : 'full build'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Last Built</div>
+          <div class="stat-value" style="font-size:16px">${ageMin < 60 ? ageMin+'m ago' : Math.floor(ageMin/60)+'h ago'}</div>
+          <div class="stat-sub">Branch: ${manifest.branch || 'unknown'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Modules Rebuilt</div>
+          <div class="stat-value">${stats.modulesRebuilt ?? 0}</div>
+          <div class="stat-sub">of ${stats.totalModules ?? 0} total</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Provider</div>
+          <div class="stat-value" style="font-size:14px">${(manifest.providerConfig?.type || 'unknown')}</div>
+          <div class="stat-sub">${manifest.providerConfig?.model || ''}</div>
+        </div>
+      </div>
+
+      <div class="section-title">Language Distribution</div>
+      <div class="lang-bar-container">
+        ${langEntries.map(([lang, count]) => `
+          <div class="lang-bar-row">
+            <div class="lang-bar-label">${lang}</div>
+            <div class="lang-bar-track">
+              <div class="lang-bar-fill" style="width:${(count/total*100).toFixed(1)}%;background:${langColors[lang] || '#4b5563'}"></div>
+            </div>
+            <div class="lang-bar-count">${count}</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="section-title">Module Groups</div>
+      <table class="group-table">
+        <thead><tr><th>Group</th><th>Modules</th><th>Share</th></tr></thead>
+        <tbody>
+          ${groupEntries.map(([group, count]) => `
+            <tr>
+              <td>${group}</td>
+              <td>${count}</td>
+              <td><div class="lang-bar-track" style="width:80px;display:inline-block">
+                <div class="lang-bar-fill" style="width:${(count/total*100).toFixed(1)}%;background:var(--accent)"></div>
+              </div> ${(count/total*100).toFixed(0)}%</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <div class="section-title" style="margin-top:8px">Build Info</div>
+      <table class="group-table">
+        <tbody>
+          <tr><td>Build ID</td><td style="font-family:var(--mono);font-size:11px">${manifest.buildId || '—'}</td></tr>
+          <tr><td>Commit</td><td style="font-family:var(--mono);font-size:11px">${(manifest.commitHash || '').slice(0,8) || '—'}</td></tr>
+          <tr><td>Repo Root</td><td style="font-family:var(--mono);font-size:11px">${manifest.repositoryRoot || '—'}</td></tr>
+          <tr><td>Graph Path</td><td style="font-family:var(--mono);font-size:11px">${manifest.graphPath || '—'}</td></tr>
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    content.innerHTML = `<div class="no-build"><span style="color:var(--red)">Error: ${err.message}</span></div>`;
+  }
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+document.getElementById('global-search').addEventListener('input', e => {
+  const q = e.target.value.trim();
+  if (q.length < 2) return;
+
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    switchPanel('search-panel');
+    performSearch(q);
+  }, 280);
+});
+
+function highlightKeywords(text, query) {
+  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+  let result = escapeHtml(text);
+  for (const kw of keywords) {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(
+      new RegExp(`(${escaped})`, 'gi'),
+      '<mark style="background:rgba(59,130,246,0.25);color:var(--text);padding:0 2px;border-radius:2px">$1</mark>'
+    );
+  }
+  return result;
+}
+
+async function performSearch(q) {
+  const results = document.getElementById('search-results');
+  results.innerHTML = '<div class="loading" style="height:80px"><div class="spinner"></div></div>';
+
+  try {
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}&limit=15`);
+    if (!data.length) {
+      results.innerHTML = `<div class="search-empty">No results for "${escapeHtml(q)}"</div>`;
+      return;
+    }
+
+    results.innerHTML = data.map(r => {
+      const matchTypes = [];
+      const qLower = q.toLowerCase();
+      if (r.path && r.path.toLowerCase().includes(qLower)) matchTypes.push('path');
+      if (r.tags && r.tags.some(t => t.toLowerCase().includes(qLower))) matchTypes.push('tag');
+      if (!matchTypes.length) matchTypes.push('content');
+
+      return `
+        <div class="search-result" onclick="${r.path ? `selectModule('${r.path.replace(/'/g, "\\'")}')` : ''}">
+          <span class="result-score">${(r.score * 100).toFixed(0)}%</span>
+          <div class="result-path">
+            ${highlightKeywords(r.path || r.type, q)}
+            ${matchTypes.map(t => `<span style="display:inline-block;margin-left:6px;font-size:9px;padding:1px 5px;border-radius:3px;background:${t === 'path' ? 'rgba(59,130,246,0.15);color:var(--accent)' : t === 'tag' ? 'rgba(167,139,250,0.15);color:var(--purple)' : 'rgba(100,116,139,0.15);color:var(--text-dim)'}">${t}</span>`).join('')}
+          </div>
+          <div class="result-preview">${highlightKeywords(r.preview || '', q)}</div>
+          <div class="result-tags">
+            ${(r.tags || []).slice(0, 6).map(t => `<div class="tag-chip">${highlightKeywords(t, q)}</div>`).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    results.innerHTML = `<div class="search-empty" style="color:var(--red)">Error: ${err.message}</div>`;
+  }
+}
+
+// ── D3 Graph ──────────────────────────────────────────────────────────────────
+function renderGraph(data) {
+  const svg = d3.select('#graph-svg');
+  const root = d3.select('#graph-root');
+  root.selectAll('*').remove();
+
+  const W = document.getElementById('graph-svg').clientWidth || 800;
+  const H = document.getElementById('graph-svg').clientHeight || 600;
+
+  const langColor = {
+    typescript: '#3178c6', javascript: '#c8a800',
+    python: '#3572a5', rust: '#dea584',
+    go: '#00acd7', kotlin: '#7f52ff',
+    ruby: '#cc342d', java: '#ea8c00',
+  };
+
+  function nodeColor(d) {
+    return langColor[d.language] || '#4b5563';
+  }
+
+  function nodeRadius(d) {
+    const base = 6;
+    const extra = Math.min(d.importedByCount * 2, 14);
+    return base + extra;
+  }
+
+  // Build node/link data
+  const nodeMap = new Map(data.nodes.map(n => [n.id, n]));
+  const validLinks = data.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
+
+  // --- Group-based initial positioning (radial layout by module group) ---
+  const groups = [...new Set(data.nodes.map(n => n.group))];
+  const groupAngle = new Map();
+  const groupRadius = Math.min(W, H) * 0.3;
+  groups.forEach((g, i) => {
+    groupAngle.set(g, (2 * Math.PI * i) / groups.length);
+  });
+
+  // Pre-position nodes by group for deterministic starting state
+  data.nodes.forEach((n, i) => {
+    const angle = groupAngle.get(n.group) || 0;
+    const jitter = (Math.random() - 0.5) * 60;
+    n.x = W / 2 + Math.cos(angle) * groupRadius + jitter;
+    n.y = H / 2 + Math.sin(angle) * groupRadius + jitter;
+  });
+
+  // Group centers for clustering force
+  const groupCenters = new Map();
+  groups.forEach((g, i) => {
+    const angle = (2 * Math.PI * i) / groups.length;
+    groupCenters.set(g, {
+      x: W / 2 + Math.cos(angle) * groupRadius * 0.8,
+      y: H / 2 + Math.sin(angle) * groupRadius * 0.8,
+    });
+  });
+
+  // Force simulation with improved parameters
+  simulation = d3.forceSimulation(data.nodes)
+    .alphaDecay(0.02)
+    .velocityDecay(0.3)
+    .force('link', d3.forceLink(validLinks).id(d => d.id).distance(d => {
+      const src = typeof d.source === 'object' ? d.source : nodeMap.get(d.source);
+      const tgt = typeof d.target === 'object' ? d.target : nodeMap.get(d.target);
+      if (src && tgt && src.group === tgt.group) return 50;
+      return 140;
+    }).strength(d => {
+      const src = typeof d.source === 'object' ? d.source : nodeMap.get(d.source);
+      const tgt = typeof d.target === 'object' ? d.target : nodeMap.get(d.target);
+      return (src && tgt && src.group === tgt.group) ? 0.6 : 0.15;
+    }))
+    .force('charge', d3.forceManyBody()
+      .strength(d => -180 - d.importedByCount * 12)
+      .distanceMax(400)
+    )
+    .force('center', d3.forceCenter(W / 2, H / 2).strength(0.05))
+    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 12).strength(0.7))
+    .force('groupX', d3.forceX(d => (groupCenters.get(d.group) || { x: W / 2 }).x).strength(0.08))
+    .force('groupY', d3.forceY(d => (groupCenters.get(d.group) || { y: H / 2 }).y).strength(0.08));
+
+  // --- Group hull backgrounds ---
+  const hullGroup = root.append('g').attr('class', 'hulls');
+
+  const groupColors = {};
+  const hullColorPalette = ['#3178c6','#3572a5','#00acd7','#dea584','#7f52ff','#10b981','#f59e0b','#ef4444','#06b6d4','#a78bfa'];
+  groups.forEach((g, i) => { groupColors[g] = hullColorPalette[i % hullColorPalette.length]; });
+
+  // Links with high visibility
+  const link = root.append('g').attr('class', 'links')
+    .selectAll('line')
+    .data(validLinks)
+    .join('line')
+    .attr('stroke', '#5a7a9e')
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', 0.7)
+    .attr('marker-end', 'url(#arrow)');
+
+  // Update arrow marker color for visibility
+  d3.select('#arrow path').attr('fill', '#6b8aaf');
+
+  // Node groups
+  const node = root.append('g').attr('class', 'nodes')
+    .selectAll('g')
+    .data(data.nodes)
+    .join('g')
+    .style('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on('end', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    );
+
+  // Glow filter for nodes
+  const defs = d3.select('#graph-svg defs');
+  defs.selectAll('filter').remove();
+  const filter = defs.append('filter').attr('id', 'glow');
+  filter.append('feGaussianBlur').attr('stdDeviation', '2.5').attr('result', 'coloredBlur');
+  const feMerge = filter.append('feMerge');
+  feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+  feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+  // Circles with glow
+  node.append('circle')
+    .attr('r', nodeRadius)
+    .attr('fill', nodeColor)
+    .attr('fill-opacity', 0.9)
+    .attr('stroke', d => d3.color(nodeColor(d)).brighter(0.8))
+    .attr('stroke-width', 1.5)
+    .attr('filter', 'url(#glow)');
+
+  // Labels
+  const labels = node.append('text')
+    .attr('class', 'node-label')
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => nodeRadius(d) + 13)
+    .attr('fill', '#8899aa')
+    .attr('font-size', '9.5px')
+    .attr('font-family', 'Berkeley Mono, Fira Code, monospace')
+    .attr('pointer-events', 'none')
+    .text(d => {
+      const parts = d.path.split('/');
+      return parts[parts.length - 1];
+    });
+
+  // --- Hover highlight: dim unconnected nodes ---
+  const connectedNodes = new Map();
+  validLinks.forEach(l => {
+    const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+    if (!connectedNodes.has(srcId)) connectedNodes.set(srcId, new Set());
+    if (!connectedNodes.has(tgtId)) connectedNodes.set(tgtId, new Set());
+    connectedNodes.get(srcId).add(tgtId);
+    connectedNodes.get(tgtId).add(srcId);
+  });
+
+  // Tooltip
+  const tooltip = document.getElementById('graph-tooltip');
+  node.on('mouseenter', (event, d) => {
+    // Highlight connected nodes/links
+    const connected = connectedNodes.get(d.id) || new Set();
+    node.transition().duration(150)
+      .attr('opacity', n => n.id === d.id || connected.has(n.id) ? 1 : 0.15);
+    link.transition().duration(150)
+      .attr('stroke-opacity', l => {
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        return (src === d.id || tgt === d.id) ? 1.0 : 0.06;
+      })
+      .attr('stroke', l => {
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        return (src === d.id || tgt === d.id) ? '#7eb8ff' : '#5a7a9e';
+      })
+      .attr('stroke-width', l => {
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        return (src === d.id || tgt === d.id) ? 2.5 : 1.5;
+      });
+
+    tooltip.innerHTML = `
+      <div class="tooltip-path">${d.path}</div>
+      <div class="tooltip-row"><span>Language</span><strong>${d.language}</strong></div>
+      <div class="tooltip-row"><span>Group</span><strong>${d.group}</strong></div>
+      <div class="tooltip-row"><span>Imports</span><strong>${d.importsCount}</strong></div>
+      <div class="tooltip-row"><span>Imported by</span><strong>${d.importedByCount}</strong></div>
+      <div class="tooltip-row"><span>Weight</span><strong>${(d.weight*100).toFixed(0)}%</strong></div>
+      ${d.exports && d.exports.length ? `
+        <div class="tooltip-exports">
+          ${d.exports.map(e => `<span class="tooltip-export-tag">${e.name}</span>`).join('')}
+        </div>
+      ` : ''}
+    `;
+    tooltip.classList.add('visible');
+    positionTooltip(event);
+  })
+  .on('mousemove', positionTooltip)
+  .on('mouseleave', () => {
+    tooltip.classList.remove('visible');
+    // Reset highlight
+    node.transition().duration(200).attr('opacity', 1);
+    link.transition().duration(200)
+      .attr('stroke-opacity', 0.7)
+      .attr('stroke', '#5a7a9e')
+      .attr('stroke-width', 1.5);
+  })
+  .on('click', (event, d) => {
+    event.stopPropagation();
+    selectModule(d.path);
+  });
+
+  svg.on('click', () => {
+    node.transition().duration(200).attr('opacity', 1);
+    link.transition().duration(200)
+      .attr('stroke-opacity', 0.7)
+      .attr('stroke', '#5a7a9e')
+      .attr('stroke-width', 1.5);
+  });
+
+  function positionTooltip(event) {
+    const rect = document.getElementById('graph-svg').getBoundingClientRect();
+    let x = event.clientX - rect.left + 14;
+    let y = event.clientY - rect.top - 12;
+    if (x + 270 > rect.width) x = event.clientX - rect.left - 275;
+    if (y + 200 > rect.height) y = event.clientY - rect.top - 200;
+    tooltip.style.left = x + 'px';
+    tooltip.style.top = y + 'px';
+  }
+
+  // Zoom
+  zoomBehavior = d3.zoom()
+    .scaleExtent([0.08, 5])
+    .on('zoom', e => root.attr('transform', e.transform));
+  svg.call(zoomBehavior);
+
+  // --- Draw group hulls on tick ---
+  function updateHulls() {
+    hullGroup.selectAll('path').remove();
+    for (const group of groups) {
+      const points = data.nodes.filter(n => n.group === group).map(n => [n.x, n.y]);
+      if (points.length < 3) continue;
+      const hull = d3.polygonHull(points);
+      if (!hull) continue;
+      hullGroup.append('path')
+        .attr('d', `M${hull.map(p => p.join(',')).join('L')}Z`)
+        .attr('fill', groupColors[group] || '#4b5563')
+        .attr('fill-opacity', 0.04)
+        .attr('stroke', groupColors[group] || '#4b5563')
+        .attr('stroke-opacity', 0.12)
+        .attr('stroke-width', 1)
+        .attr('rx', 20);
+    }
+  }
+
+  // Tick
+  simulation.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+    updateHulls();
+  });
+
+  // --- Zoom-fit using actual bounding box ---
+  function zoomToFit(animate = true) {
+    if (!data.nodes.length) return;
+    const padding = 60;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    data.nodes.forEach(n => {
+      const r = nodeRadius(n);
+      if (n.x - r < minX) minX = n.x - r;
+      if (n.y - r < minY) minY = n.y - r;
+      if (n.x + r > maxX) maxX = n.x + r;
+      if (n.y + r > maxY) maxY = n.y + r;
+    });
+    const bboxW = maxX - minX + padding * 2;
+    const bboxH = maxY - minY + padding * 2;
+    const scale = Math.min(W / bboxW, H / bboxH, 2);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const transform = d3.zoomIdentity
+      .translate(W / 2, H / 2)
+      .scale(scale)
+      .translate(-cx, -cy);
+    if (animate) {
+      svg.transition().duration(600).call(zoomBehavior.transform, transform);
+    } else {
+      svg.call(zoomBehavior.transform, transform);
+    }
+  }
+
+  // Auto-fit after simulation settles
+  simulation.on('end', () => zoomToFit(true));
+
+  // Zoom controls
+  document.getElementById('zoom-in').onclick = () =>
+    svg.transition().duration(300).call(zoomBehavior.scaleBy, 1.5);
+  document.getElementById('zoom-out').onclick = () =>
+    svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.67);
+  document.getElementById('zoom-fit').onclick = () => zoomToFit(true);
+  document.getElementById('toggle-labels').onclick = () => {
+    showLabels = !showLabels;
+    labels.attr('display', showLabels ? null : 'none');
+  };
+}
+
+// ── Markdown renderer (lightweight) ──────────────────────────────────────────
+function renderMarkdown(md) {
+  return md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/```[\w]*\n([\s\S]*?)```/g, '<pre>$1</pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^## (.*)/gm, '<h2>$1</h2>')
+    .replace(/^### (.*)/gm, '<h3>$1</h3>')
+    .replace(/^# (.*)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^\- (.*)/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<[hup]|<li|<pre)(.+)/gm, '<p>$1</p>');
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

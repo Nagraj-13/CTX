@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, rm } from 'fs/promises';
 import path from 'path';
 import {
   CtxConfig, DependencyGraph, BuildManifest, FileManifestEntry,
@@ -126,6 +126,32 @@ export class BuildEngine {
         const propagated = propagateInvalidation(graph, changeSet.signatureChanged);
         for (const p of propagated) changeSet.invalidated.add(p);
       }
+
+      // Safety net: any file that exists on disk but has no stored artifact
+      // should be rebuilt (catches files missed in previous partial builds)
+      const existingModuleIds = new Set(await this.store.listModules());
+      for (const file of files) {
+        const moduleId = pathId(file.path);
+        if (!existingModuleIds.has(moduleId)) {
+          changeSet.invalidated.add(file.path);
+          if (!changeSet.added.includes(file.path)) {
+            changeSet.added.push(file.path);
+          }
+        }
+      }
+
+      // Clean up artifacts for deleted files
+      if (changeSet.deleted.length > 0) {
+        for (const deletedPath of changeSet.deleted) {
+          const moduleId = pathId(deletedPath);
+          const dir = this.paths.moduleDir(moduleId);
+          try {
+            await rm(dir, { recursive: true, force: true });
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      }
     } else {
       // Full build: all files need building
       changeSet.invalidated = new Set(files.map(f => f.path));
@@ -152,10 +178,13 @@ export class BuildEngine {
     const batchSize = this.config.build.parallelWorkers;
     const moduleSummaries: Record<string, string> = {};
 
-    // Load existing summaries for modules not being rebuilt
+    // Track deleted paths for exclusion
+    const deletedPaths = new Set(changeSet.deleted);
+
+    // Load existing summaries for modules not being rebuilt (exclude deleted)
     const allModules = await this.store.loadAllModules();
     for (const artifact of allModules) {
-      if (!changeSet.invalidated.has(artifact.path)) {
+      if (!changeSet.invalidated.has(artifact.path) && !deletedPaths.has(artifact.path)) {
         moduleSummaries[artifact.path] = artifact.content;
       }
     }

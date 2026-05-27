@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import path from 'path';
-import { SemanticArtifact, ArtifactType } from './types.js';
+import { SemanticArtifact, ArtifactType, DependencyGraph } from './types.js';
 import { CtxPaths } from './config.js';
 import { fileExists, pathId } from '../utils/helpers.js';
 
@@ -150,7 +150,7 @@ export class ArtifactStore {
     await writeFile(this.paths.graphFile, JSON.stringify(graph), 'utf8');
   }
 
-  async loadGraph(): Promise<Record<string, unknown> | null> {
+  async loadGraph(): Promise<DependencyGraph | null> {
     if (!(await fileExists(this.paths.graphFile))) return null;
     return JSON.parse(await readFile(this.paths.graphFile, 'utf8'));
   }
@@ -161,9 +161,9 @@ export class ArtifactStore {
     query: string,
     type?: ArtifactType | 'all',
     limit: number = 10,
-  ): Promise<Array<{ artifact: SemanticArtifact; score: number }>> {
+  ): Promise<Array<{ artifact: SemanticArtifact; score: number; snippet: string }>> {
     const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-    const results: Array<{ artifact: SemanticArtifact; score: number }> = [];
+    const results: Array<{ artifact: SemanticArtifact; score: number; snippet: string }> = [];
 
     if (keywords.length === 0) return results; // No valid keywords
 
@@ -175,21 +175,94 @@ export class ArtifactStore {
     if (arch) candidates.push(arch);
     if (flows) candidates.push(flows);
 
+    // Compute inverse-document-frequency per keyword for TF-IDF
+    const docCount = candidates.length || 1;
+    const idfMap = new Map<string, number>();
+    for (const kw of keywords) {
+      let docsWithKw = 0;
+      for (const a of candidates) {
+        const text = (a.content + ' ' + a.path + ' ' + a.tags.join(' ')).toLowerCase();
+        if (text.includes(kw)) docsWithKw++;
+      }
+      idfMap.set(kw, Math.log((docCount + 1) / (docsWithKw + 1)) + 1);
+    }
+
     for (const artifact of candidates) {
       // Skip if type filter is specified and doesn't match (but 'all' means no filtering)
       if (type && type !== 'all' && artifact.type !== type) continue;
 
-      const text = (artifact.content + ' ' + artifact.tags.join(' ')).toLowerCase();
-      let score = 0;
-      for (const kw of keywords) {
-        const matches = (text.match(new RegExp(kw, 'gi')) ?? []).length;
-        score += Math.min(matches / 3, 1);
-      }
-      score /= keywords.length;
+      const contentLower = artifact.content.toLowerCase();
+      const pathLower = (artifact.path || '').toLowerCase();
+      const tagsLower = artifact.tags.map(t => t.toLowerCase());
+      const contentLength = Math.max(contentLower.length, 1);
 
-      if (score > 0) {
-        results.push({ artifact, score });
+      // Extract first heading or first line as title
+      const titleMatch = artifact.content.match(/^#+ (.+)/m);
+      const titleLower = (titleMatch ? titleMatch[1] : artifact.content.split('\n')[0] || '').toLowerCase();
+
+      let totalScore = 0;
+      let firstMatchIndex = -1;
+
+      for (const kw of keywords) {
+        const idf = idfMap.get(kw) ?? 1;
+        let kwScore = 0;
+
+        // Signal 1: Path/filename match (strongest signal — 2.0x weight)
+        if (pathLower.includes(kw)) {
+          const pathBasename = pathLower.split('/').pop() || pathLower;
+          if (pathBasename.includes(kw)) {
+            kwScore += 2.5; // filename match is very strong
+          } else {
+            kwScore += 1.5; // directory match
+          }
+        }
+
+        // Signal 2: Tag match (1.5x weight)
+        const tagMatches = tagsLower.filter(t => t.includes(kw) || kw.includes(t)).length;
+        kwScore += Math.min(tagMatches * 1.5, 3.0);
+
+        // Signal 3: Title/heading match (1.3x weight)
+        if (titleLower.includes(kw)) {
+          kwScore += 1.3;
+        }
+
+        // Signal 4: Content match — TF-IDF normalized
+        const contentMatches = (contentLower.match(new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length;
+        if (contentMatches > 0) {
+          // Term frequency normalized by document length (per 1000 chars)
+          const tf = (contentMatches / (contentLength / 1000));
+          kwScore += Math.min(tf * idf * 0.3, 2.0);
+
+          // Track first match position for snippet extraction
+          if (firstMatchIndex === -1) {
+            firstMatchIndex = contentLower.indexOf(kw);
+          }
+        }
+
+        totalScore += kwScore;
       }
+
+      // Normalize by keyword count to balance multi-word queries
+      totalScore /= keywords.length;
+
+      // Apply minimum threshold
+      if (totalScore < 0.1) continue;
+
+      // Extract contextual snippet around first match
+      let snippet = '';
+      if (firstMatchIndex >= 0) {
+        const snippetRadius = 150;
+        const start = Math.max(0, firstMatchIndex - snippetRadius);
+        const end = Math.min(artifact.content.length, firstMatchIndex + snippetRadius);
+        snippet = (start > 0 ? '…' : '') +
+          artifact.content.slice(start, end).replace(/\n+/g, ' ').trim() +
+          (end < artifact.content.length ? '…' : '');
+      } else {
+        snippet = artifact.content.slice(0, 250).replace(/\n+/g, ' ').trim();
+        if (artifact.content.length > 250) snippet += '…';
+      }
+
+      results.push({ artifact, score: Math.min(totalScore / 5, 1), snippet });
     }
 
     return results

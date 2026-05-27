@@ -18,6 +18,7 @@ import {
   doctorCommand,
   gcCommand,
 } from './commands/query.js';
+import { uiCommand } from './commands/ui.js';
 import {
   branchCommand,
   mergeCommand,
@@ -230,6 +231,18 @@ async function main() {
       await startMcpServer().catch(bail);
     });
 
+  // ── ctx ui ───────────────────────────────────────────────────────────────
+ program
+    .command('ui')
+    .description('Open the CTX visual dashboard in your browser')
+    .option('--port <number>', 'Port to listen on (default: 7331)', '7331')
+    .option('--no-open', 'Do not open browser automatically')
+    .action(async (opts) => {
+      await uiCommand({
+        port: parseInt(opts.port),
+        noOpen: !opts.open,         // commander sets opts.open = false when --no-open
+      }).catch(bail);
+    });
   // ── Parse ─────────────────────────────────────────────────────────────────
 
   await program.parseAsync(process.argv);
