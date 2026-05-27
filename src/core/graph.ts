@@ -29,6 +29,8 @@ export function buildGraph(
       semanticWeight: 0,
       lastSemanticChange: new Date().toISOString(),
       fileSize: 0,
+      securityIssues: file.securityIssues || [],
+      patterns: file.patterns || [],
     };
     nodes[id] = node;
     pathIndex[file.filePath] = id;
@@ -263,16 +265,19 @@ function resolveToKnownFile(
 ): string | null {
   if (!resolvedPath) return null;
 
+  // Make sure we use forward slashes for matching
+  const normalizedPath = resolvedPath.replace(/\\/g, '/');
+
   // Try exact match
-  if (pathIndex[resolvedPath]) return pathIndex[resolvedPath];
+  if (pathIndex[normalizedPath]) return pathIndex[normalizedPath];
 
   // Try adding common extensions
-  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs']) {
-    const withExt = resolvedPath + ext;
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.kt', '.cs', '.cpp', '.c', '.php', '.rb', '.swift', '.html', '.md', '.json']) {
+    const withExt = normalizedPath + ext;
     if (pathIndex[withExt]) return pathIndex[withExt];
 
     // Try as directory index
-    const indexPath = resolvedPath + '/index' + ext;
+    const indexPath = normalizedPath + '/index' + ext;
     if (pathIndex[indexPath]) return pathIndex[indexPath];
   }
 

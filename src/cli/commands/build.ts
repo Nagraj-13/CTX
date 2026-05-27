@@ -79,6 +79,15 @@ async function runBuild(
     ['Tokens used', result.tokensUsed.toLocaleString()],
   ];
 
+  if (result.healthScore) {
+    const gradeColor = result.healthScore.grade === 'A' || result.healthScore.grade === 'B' ? chalk.green 
+                     : result.healthScore.grade === 'C' ? chalk.yellow : chalk.red;
+    
+    rows.push(['Health Grade', gradeColor(`${result.healthScore.grade} (${result.healthScore.score}/100)`)]);
+    if (result.totalPatterns) rows.push(['Patterns', chalk.blue(`${result.totalPatterns} detected`)]);
+    if (result.totalSecurityIssues) rows.push(['Security', chalk.red(`${result.totalSecurityIssues} issues`)]);
+  }
+
   if (!opts.dryRun) {
     const savedTokensPerSession = Math.round(result.totalModules * 1800 * 0.75);
     rows.push(['Est. savings', chalk.green(`~${savedTokensPerSession.toLocaleString()} tokens/session`)]);

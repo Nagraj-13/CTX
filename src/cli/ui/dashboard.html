@@ -162,6 +162,12 @@
   .lang-rs { background: #dea584; }
   .lang-go { background: #00acd7; }
   .lang-js { background: #f1e05a; }
+  .lang-html { background: #e34c26; }
+  .lang-md { background: #ffffff; }
+  .lang-json { background: #555555; }
+  .lang-java { background: #ea8c00; }
+  .lang-cs { background: #178600; }
+  .lang-php { background: #4F5D95; }
   .lang-default { background: var(--text-muted); }
 
   /* ── Main ── */
@@ -557,6 +563,7 @@
         <div class="legend-row"><div class="legend-circle" style="background:#00acd7"></div>Go</div>
         <div class="legend-row"><div class="legend-circle" style="background:#dea584"></div>Rust</div>
         <div class="legend-row"><div class="legend-circle" style="background:#f1e05a"></div>JavaScript</div>
+        <div class="legend-row"><div class="legend-circle" style="background:#e34c26"></div>HTML/MD</div>
         <div class="legend-row" style="margin-top:6px">
           <div style="width:24px;height:2px;background:linear-gradient(90deg,#7eb8ff,#5a7a9e)"></div>imports →
         </div>
@@ -717,6 +724,12 @@ function langClass(path) {
   if (path.endsWith('.rs')) return 'lang-rs';
   if (path.endsWith('.go')) return 'lang-go';
   if (path.endsWith('.js') || path.endsWith('.jsx')) return 'lang-js';
+  if (path.endsWith('.html') || path.endsWith('.htm')) return 'lang-html';
+  if (path.endsWith('.md') || path.endsWith('.mdx')) return 'lang-md';
+  if (path.endsWith('.json')) return 'lang-json';
+  if (path.endsWith('.java') || path.endsWith('.kt') || path.endsWith('.swift')) return 'lang-java';
+  if (path.endsWith('.cs') || path.endsWith('.cpp') || path.endsWith('.c')) return 'lang-cs';
+  if (path.endsWith('.php') || path.endsWith('.rb')) return 'lang-php';
   return 'lang-default';
 }
 
@@ -1039,6 +1052,9 @@ function renderGraph(data) {
     python: '#3572a5', rust: '#dea584',
     go: '#00acd7', kotlin: '#7f52ff',
     ruby: '#cc342d', java: '#ea8c00',
+    html: '#e34c26', markdown: '#ffffff', mdx: '#f9ac00',
+    csharp: '#178600', cpp: '#f34b7d', php: '#4F5D95',
+    swift: '#ffac45', json: '#555555', c: '#555555'
   };
 
   function nodeColor(d) {
@@ -1285,9 +1301,29 @@ function renderGraph(data) {
 
   // Tick
   simulation.on('tick', () => {
-    link
-      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    link.each(function(d) {
+      const dx = d.target.x - d.source.x;
+      const dy = d.target.y - d.source.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist === 0) {
+        d3.select(this)
+          .attr('x1', d.source.x).attr('y1', d.source.y)
+          .attr('x2', d.target.x).attr('y2', d.target.y);
+        return;
+      }
+      
+      // Stop the line at the target node's boundary so the arrow is fully visible
+      const targetRadius = nodeRadius(d.target) + 3; // +3 for marker size
+      const ratio = targetRadius / dist;
+      
+      d3.select(this)
+        .attr('x1', d.source.x)
+        .attr('y1', d.source.y)
+        .attr('x2', d.target.x - dx * ratio)
+        .attr('y2', d.target.y - dy * ratio);
+    });
+    
     node.attr('transform', d => `translate(${d.x},${d.y})`);
     updateHulls();
   });

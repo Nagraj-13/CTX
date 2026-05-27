@@ -79,6 +79,8 @@ const EXT_MAP: Record<string, string> = {
   '.json': 'json',
   '.yaml': 'yaml', '.yml': 'yaml',
   '.toml': 'toml',
+  '.html': 'html', '.htm': 'html',
+  '.mdx': 'mdx',
 };
 
 export function detectLanguage(filePath: string): string {
@@ -88,7 +90,7 @@ export function detectLanguage(filePath: string): string {
 
 export const SOURCE_LANGUAGES = new Set([
   'typescript', 'javascript', 'python', 'rust', 'go', 'java', 'ruby',
-  'kotlin', 'swift', 'cpp', 'c', 'csharp', 'php',
+  'kotlin', 'swift', 'cpp', 'c', 'csharp', 'php', 'html', 'markdown', 'mdx', 'json'
 ]);
 
 export function isSourceFile(filePath: string): boolean {

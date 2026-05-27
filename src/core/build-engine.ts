@@ -2,7 +2,7 @@ import { readFile, writeFile, rm } from 'fs/promises';
 import path from 'path';
 import {
   CtxConfig, DependencyGraph, BuildManifest, FileManifestEntry,
-  ChangeSet, ExtractedSymbols,
+  ChangeSet, ExtractedSymbols, HealthScore, SecurityIssue, DetectedPattern
 } from './types.js';
 import { CtxPaths } from './config.js';
 import { scanRepository, getGitBranch, getGitCommit, getGitRepoName } from './scanner.js';
@@ -32,6 +32,9 @@ export interface BuildResult {
   tokensUsed: number;
   durationMs: number;
   errors: string[];
+  healthScore?: import('./types.js').HealthScore;
+  totalSecurityIssues?: number;
+  totalPatterns?: number;
 }
 
 // ─── Build engine ─────────────────────────────────────────────────────────────
@@ -280,7 +283,17 @@ export class BuildEngine {
     await this.generateIndex(graph, moduleSummaries);
     progress('Writing index', 1, 1);
 
-    // ── Phase 8: Save manifest ────────────────────────────────────────────────
+    // ── Phase 8: Compute Health & Save manifest ───────────────────────────────
+    progress('Computing health score', 0, 1);
+    const healthScore = computeHealth(graph, fileContents);
+
+    let totalSecurityIssues = 0;
+    let totalPatterns = 0;
+    Object.values(graph.nodes).forEach(n => {
+      totalSecurityIssues += n.securityIssues.length;
+      totalPatterns += n.patterns.length;
+    });
+
     const manifest: BuildManifest = {
       buildId: uuid(),
       timestamp: new Date().toISOString(),
@@ -299,6 +312,9 @@ export class BuildEngine {
         buildDurationMs: Date.now() - startTime,
         incrementalRebuild: isIncremental,
         modulesRebuilt: builtCount,
+        healthScore,
+        totalSecurityIssues,
+        totalPatterns,
       },
       providerConfig: {
         type: this.config.provider.type,
@@ -317,6 +333,9 @@ export class BuildEngine {
       tokensUsed: this.tokenCounter,
       durationMs: Date.now() - startTime,
       errors,
+      healthScore,
+      totalSecurityIssues,
+      totalPatterns,
     };
   }
 
@@ -346,6 +365,82 @@ export class BuildEngine {
 
     await this.store.saveIndex(lines.join('\n'));
   }
+}
+
+// ─── Health Scoring ───────────────────────────────────────────────────────────
+
+function computeHealth(graph: DependencyGraph, fileContents: Record<string, string>): HealthScore {
+  let score = 100;
+  const issues: string[] = [];
+  
+  const nodes = Object.values(graph.nodes);
+  if (nodes.length === 0) return { score: 0, grade: 'F', issues: ['No files found'] };
+
+  let isolatedFiles = 0;
+  let circularCount = 0;
+  let largeFiles = 0;
+  let totalConnections = 0;
+  let highSecIssues = 0;
+
+  for (const node of nodes) {
+    if (node.importedBy.length === 0 && !node.path.match(/(index|main|app|cli)\.(ts|js|go|py)$/)) {
+      isolatedFiles++; 
+    }
+
+    if (node.imports.some(imp => graph.nodes[imp]?.imports.includes(node.id))) {
+      circularCount++;
+    }
+
+    const size = fileContents[node.path]?.length ?? 0;
+    if (size > 20000) { 
+      largeFiles++;
+    }
+
+    totalConnections += node.imports.length;
+    highSecIssues += node.securityIssues.filter(i => i.severity === 'high').length;
+  }
+
+  const deadPct = nodes.length > 0 ? (isolatedFiles / nodes.length * 100) : 0;
+  if (deadPct > 0) {
+    const penalty = Math.min(20, deadPct);
+    score -= penalty;
+    if (penalty >= 5) issues.push(`High amount of isolated files (${deadPct.toFixed(1)}%)`);
+  }
+
+  circularCount = circularCount / 2;
+  if (circularCount > 0) {
+    const penalty = Math.min(20, circularCount * 5);
+    score -= penalty;
+    issues.push(`${circularCount} circular dependencies detected`);
+  }
+
+  if (largeFiles > 0) {
+    const penalty = Math.min(15, largeFiles * 3);
+    score -= penalty;
+    if (penalty >= 3) issues.push(`${largeFiles} excessively large files (God objects)`);
+  }
+
+  const avgCoup = totalConnections / nodes.length;
+  if (avgCoup > 3) {
+    const penalty = Math.min(15, Math.max(0, avgCoup - 3) * 2);
+    score -= penalty;
+    issues.push(`High average coupling (${avgCoup.toFixed(1)} imports per file)`);
+  }
+
+  if (highSecIssues > 0) {
+    const penalty = Math.min(20, highSecIssues * 5);
+    score -= penalty;
+    issues.push(`${highSecIssues} high-severity security issues`);
+  }
+
+  score = Math.max(0, Math.round(score));
+  let grade: 'A'|'B'|'C'|'D'|'F' = 'F';
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+
+  return { score, grade, issues };
 }
 
 // ─── Change detection ─────────────────────────────────────────────────────────
