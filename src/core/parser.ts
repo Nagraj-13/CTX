@@ -88,8 +88,8 @@ const tsParser: Parser = (content, filePath, repoRoot) => {
   // Exported functions
   const lines = content.split('\n');
 
-  // export function X(...) / export async function X(...)
-  const exportFnRe = /^export\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)/;
+  // export function X(...) / export async function X(...) — params may span multiple lines
+  const exportFnRe = /^export\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)/;
   // export const X = (...) =>
   const exportArrowRe = /^export\s+const\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(?:async\s+)?\(/;
   // export class X
