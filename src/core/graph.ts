@@ -13,12 +13,14 @@ export function buildGraph(
 
   // First pass: create all nodes
   for (const file of extractedFiles) {
-    const id = pathId(file.filePath);
+    // Normalize to forward slashes for cross-platform consistency
+    const normalizedFilePath = file.filePath.replace(/\\/g, '/');
+    const id = pathId(normalizedFilePath);
     const node: GraphNode = {
       id,
-      path: file.filePath,
+      path: normalizedFilePath,
       language: file.language,
-      moduleGroup: inferModuleGroup(file.filePath),
+      moduleGroup: inferModuleGroup(normalizedFilePath),
       imports: [],
       importedBy: [],
       externalDeps: file.imports
@@ -29,9 +31,11 @@ export function buildGraph(
       semanticWeight: 0,
       lastSemanticChange: new Date().toISOString(),
       fileSize: 0,
+      securityIssues: file.securityIssues || [],
+      patterns: file.patterns || [],
     };
     nodes[id] = node;
-    pathIndex[file.filePath] = id;
+    pathIndex[normalizedFilePath] = id;
   }
 
   // Second pass: resolve import edges
@@ -263,16 +267,33 @@ function resolveToKnownFile(
 ): string | null {
   if (!resolvedPath) return null;
 
-  // Try exact match
-  if (pathIndex[resolvedPath]) return pathIndex[resolvedPath];
+  // Make sure we use forward slashes for matching
+  const normalizedPath = resolvedPath.replace(/\\/g, '/');
 
-  // Try adding common extensions
-  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs']) {
-    const withExt = resolvedPath + ext;
+  // Try exact match
+  if (pathIndex[normalizedPath]) return pathIndex[normalizedPath];
+
+  // TypeScript ESM convention: imports use .js but source files are .ts
+  // Strip JS extensions and try TS equivalents first
+  const jsExtRe = /\.(js|jsx|mjs|cjs)$/;
+  if (jsExtRe.test(normalizedPath)) {
+    const stripped = normalizedPath.replace(jsExtRe, '');
+    for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+      if (pathIndex[stripped + ext]) return pathIndex[stripped + ext];
+    }
+    // Try as directory index after stripping JS extension
+    for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+      if (pathIndex[stripped + '/index' + ext]) return pathIndex[stripped + '/index' + ext];
+    }
+  }
+
+  // Try adding common extensions (for extensionless imports)
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.kt', '.cs', '.cpp', '.c', '.php', '.rb', '.swift', '.html', '.md', '.json']) {
+    const withExt = normalizedPath + ext;
     if (pathIndex[withExt]) return pathIndex[withExt];
 
     // Try as directory index
-    const indexPath = resolvedPath + '/index' + ext;
+    const indexPath = normalizedPath + '/index' + ext;
     if (pathIndex[indexPath]) return pathIndex[indexPath];
   }
 
