@@ -13,12 +13,14 @@ export function buildGraph(
 
   // First pass: create all nodes
   for (const file of extractedFiles) {
-    const id = pathId(file.filePath);
+    // Normalize to forward slashes for cross-platform consistency
+    const normalizedFilePath = file.filePath.replace(/\\/g, '/');
+    const id = pathId(normalizedFilePath);
     const node: GraphNode = {
       id,
-      path: file.filePath,
+      path: normalizedFilePath,
       language: file.language,
-      moduleGroup: inferModuleGroup(file.filePath),
+      moduleGroup: inferModuleGroup(normalizedFilePath),
       imports: [],
       importedBy: [],
       externalDeps: file.imports
@@ -33,7 +35,7 @@ export function buildGraph(
       patterns: file.patterns || [],
     };
     nodes[id] = node;
-    pathIndex[file.filePath] = id;
+    pathIndex[normalizedFilePath] = id;
   }
 
   // Second pass: resolve import edges
@@ -271,7 +273,21 @@ function resolveToKnownFile(
   // Try exact match
   if (pathIndex[normalizedPath]) return pathIndex[normalizedPath];
 
-  // Try adding common extensions
+  // TypeScript ESM convention: imports use .js but source files are .ts
+  // Strip JS extensions and try TS equivalents first
+  const jsExtRe = /\.(js|jsx|mjs|cjs)$/;
+  if (jsExtRe.test(normalizedPath)) {
+    const stripped = normalizedPath.replace(jsExtRe, '');
+    for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+      if (pathIndex[stripped + ext]) return pathIndex[stripped + ext];
+    }
+    // Try as directory index after stripping JS extension
+    for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+      if (pathIndex[stripped + '/index' + ext]) return pathIndex[stripped + '/index' + ext];
+    }
+  }
+
+  // Try adding common extensions (for extensionless imports)
   for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.kt', '.cs', '.cpp', '.c', '.php', '.rb', '.swift', '.html', '.md', '.json']) {
     const withExt = normalizedPath + ext;
     if (pathIndex[withExt]) return pathIndex[withExt];
